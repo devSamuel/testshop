@@ -1,0 +1,70 @@
+name: test-shop
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: shop
+      POSTGRES_PASSWORD: shop
+      POSTGRES_DB: shop
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shop -d shop"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  app:
+    build:
+      context: .
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:22-alpine}
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.13-slim}
+    image: test-shop:latest
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      DATABASE_URL: postgresql+asyncpg://shop:shop@db:5432/shop
+      SEED_ON_STARTUP: "true"
+      RESERVATION_TTL_SECONDS: ${RESERVATION_TTL_SECONDS:-600}
+      RECONCILE_AFTER_SECONDS: ${RECONCILE_AFTER_SECONDS:-5}
+      SWEEPER_INTERVAL_SECONDS: ${SWEEPER_INTERVAL_SECONDS:-5}
+      LOW_STOCK_THRESHOLD: ${LOW_STOCK_THRESHOLD:-5}
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/readyz', timeout=2).status == 200 else 1)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  worker:
+    image: test-shop:latest
+    command: ["python", "-m", "app.worker"]
+    deploy:
+      replicas: ${WORKERS:-1}
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      DATABASE_URL: postgresql+asyncpg://shop:shop@db:5432/shop
+      RUN_MIGRATIONS: "false"
+      DB_POOL_SIZE: "8"
+      DB_MAX_OVERFLOW: "0"
+      DISPATCHER_WORKERS: ${DISPATCHER_WORKERS:-4}
+      RESERVATION_TTL_SECONDS: ${RESERVATION_TTL_SECONDS:-600}
+      RECONCILE_AFTER_SECONDS: ${RECONCILE_AFTER_SECONDS:-5}
+      SWEEPER_INTERVAL_SECONDS: ${SWEEPER_INTERVAL_SECONDS:-5}
+      LOW_STOCK_THRESHOLD: ${LOW_STOCK_THRESHOLD:-5}
+    restart: unless-stopped
+
+volumes:
+  pgdata:

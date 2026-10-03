@@ -1,0 +1,131 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: shop
+          POSTGRES_PASSWORD: shop
+          POSTGRES_DB: shop_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U shop -d shop_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv python install 3.13
+      - run: uv sync --frozen
+      - name: Lint and format
+        run: uv run ruff check . && uv run ruff format --check .
+      - name: Type check (strict)
+        run: uv run mypy app
+      - name: Architecture contracts
+        run: uv run lint-imports
+      - name: Migrations match models
+        env:
+          DATABASE_URL: postgresql+asyncpg://shop:shop@localhost:5432/shop_test
+        run: uv run alembic upgrade head && uv run alembic check && uv run alembic downgrade base
+      - name: Tests on real Postgres
+        env:
+          TEST_DATABASE_URL: postgresql+asyncpg://shop:shop@localhost:5432/shop_test
+        run: uv run pytest -q
+      - name: Dependency audit
+        run: |
+          uv export --frozen --no-dev --no-emit-project --format requirements-txt > /tmp/requirements.txt
+          uv run pip-audit --strict --disable-pip --no-deps -r /tmp/requirements.txt
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Dependency audit
+        run: npm audit --omit=dev --audit-level=high
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and start the stack
+        run: docker compose up --build -d
+      - name: Wait for readiness
+        run: |
+          for i in $(seq 1 60); do curl -fsS localhost:8080/readyz && exit 0; sleep 2; done
+          docker compose logs app; exit 1
+      - name: Smoke test
+        run: |
+          curl -fsS localhost:8080/ | grep -qi "<div id=\"root\""
+          curl -fsS "localhost:8080/api/products?q=keyboard" | grep -q '"total"'
+          curl -fsS localhost:8080/api/admin/invariants | grep -q '"passed":true'
+      - name: Image runs as non-root
+        run: test "$(docker compose exec -T app id -u)" != "0"
+      - name: Background work runs in the worker container
+        run: |
+          for i in $(seq 1 30); do docker compose logs worker | grep -q "worker started" && exit 0; sleep 2; done
+          docker compose logs worker; exit 1
+      - name: Scale workers to 2
+        run: |
+          docker compose up -d --no-deps --scale worker=2 worker
+          for i in $(seq 1 30); do
+            test "$(docker compose logs worker | grep -c "worker started")" -ge 2 && break; sleep 2
+          done
+          test "$(docker compose ps -q worker | wc -l)" -eq 2
+          test "$(docker compose logs worker | grep -c "worker started")" -ge 2
+          curl -fsS localhost:8080/api/admin/invariants | grep -q '"passed":true'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install Playwright and Chromium
+        working-directory: frontend
+        run: npm ci && npx playwright install --with-deps chromium
+      - name: End-to-end tests in a real browser
+        working-directory: frontend
+        env:
+          BASE_URL: http://localhost:8080
+        run: npm run test:e2e
+      - name: Invariants still hold after the browser tests
+        run: curl -fsS localhost:8080/api/admin/invariants | grep -q '"passed":true'
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report
+          retention-days: 7
+      - if: always()
+        run: docker compose down -v

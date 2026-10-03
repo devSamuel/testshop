@@ -1,0 +1,4 @@
+name,sku,description,category,price,stock,weight_kg
+Desk,D-1,"Two
+lines, with comma",Office,100,1,10
+Pen,P-1,"He said ""hi""",Office,1.5,100,0.01
