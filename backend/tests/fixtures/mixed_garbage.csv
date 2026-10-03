@@ -1,0 +1,4 @@
+name,sku,description,category,price,stock,weight_kg
+=cmd|/C calc!A0,X-1,@SUM(1),+evil,-1,=1+1,
+,,,,,,
+"unterminated,Y-1,x,y,1,1,1

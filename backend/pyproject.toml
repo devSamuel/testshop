@@ -1,0 +1,91 @@
+[project]
+name = "shop-backend"
+version = "1.0.0"
+description = "Enterprise-grade e-commerce backend: catalog, CSV import, search, checkout saga, inventory ledger"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "python-multipart>=0.0.18",
+    "email-validator>=2.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.28",
+    "hypothesis>=6.118",
+    "testcontainers[postgres]>=4.8",
+    "psycopg[binary]>=3.2",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "import-linter>=2.1",
+    "pip-audit>=2.7",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 110
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "ASYNC", "RUF", "S", "PT", "DTZ", "ERA"]
+ignore = ["S101", "B008", "RUF012"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "DTZ"]
+"migrations/**" = ["E501"]
+"app/cli.py" = ["S311"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+plugins = ["pydantic.mypy"]
+exclude = ["migrations/", "tests/"]
+
+[[tool.mypy.overrides]]
+module = ["testcontainers.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
+markers = ["slow: long-running property-based or load tests"]
+filterwarnings = ["ignore::DeprecationWarning:testcontainers.*"]
+
+[tool.importlinter]
+root_package = "app"
+
+[[tool.importlinter.contracts]]
+name = "Layered modular monolith"
+type = "layers"
+layers = [
+    "app.api",
+    "app.orders | app.importing",
+    "app.inventory",
+    "app.catalog",
+    "app.payments | app.events",
+    "app.core",
+]
+
+[[tool.importlinter.contracts]]
+name = "Payments adapter is isolated from the domain"
+type = "forbidden"
+source_modules = ["app.payments"]
+forbidden_modules = ["app.catalog", "app.inventory", "app.orders", "app.importing", "app.events", "app.api"]
+
+[[tool.importlinter.contracts]]
+name = "Event infrastructure is transport-only and knows no domain"
+type = "forbidden"
+source_modules = ["app.events"]
+forbidden_modules = ["app.catalog", "app.inventory", "app.orders", "app.importing", "app.payments", "app.api"]
