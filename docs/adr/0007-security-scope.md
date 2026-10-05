@@ -1,4 +1,4 @@
-# ADR 0008: No authentication in this build, with the exposure documented
+# ADR 0007: No authentication in this build, with the exposure documented
 
 **Status:** Accepted
 

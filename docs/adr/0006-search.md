@@ -1,4 +1,4 @@
-# ADR 0007: Postgres full-text plus trigram search with a fuzzy fallback
+# ADR 0006: Postgres full-text plus trigram search with a fuzzy fallback
 
 **Status:** Accepted
 
@@ -17,6 +17,6 @@ Shoppers type partial words ("headph"), make typos ("headphnes", "keybaord") and
 - No extra infrastructure is needed.
 
 ## Alternatives considered
-- **Elasticsearch/OpenSearch/Meilisearch:** better relevance tuning, facets and synonyms, but a second datastore to keep in sync. It becomes the right choice when there are millions of products, multiple languages, or merchandising rules. How it would plug in is in [scaling.md](../scaling.md#search-at-scale-a-search-engine-then-semantic-search).
-- **Semantic search with embeddings:** finds products by meaning rather than words ("something to keep coffee hot" finds the thermos flask), with pgvector in the same Postgres or OpenSearch k-NN. It's weak on exact SKUs and needs an embedding pipeline and a relevance evaluation, so it would run as a hybrid with keyword search, merged by reciprocal rank fusion. It's the next step after a dedicated engine, or directly after today's design with pgvector ([scaling.md](../scaling.md#step-2-semantic-search-combined-with-keyword-search)).
+- **Elasticsearch/OpenSearch/Meilisearch:** better relevance tuning, facets and synonyms, but a second datastore to keep in sync. It becomes the right choice when there are millions of products, multiple languages, or merchandising rules. Search already has one entry point and outbox events on every product change, so an indexer can subscribe later.
+- **Semantic search with embeddings:** finds products by meaning rather than words ("something to keep coffee hot" finds the thermos flask), with pgvector in the same Postgres or OpenSearch k-NN. It's weak on exact SKUs and needs an embedding pipeline and a relevance evaluation, so it would run as a hybrid with keyword search, merged by reciprocal rank fusion. It's the next step after a dedicated engine, or directly after today's design with pgvector.
 - **Keyset pagination:** better for deep pages. It is listed as the next step, because offset is fine for UI-sized pages and supports "jump to page N".

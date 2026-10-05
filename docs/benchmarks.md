@@ -59,6 +59,15 @@ not Postgres row locking; more API processes or replicas raise it.
 
 Invariants after the run: **all passed**.
 
+## Import (measured separately with `make seed-large`)
+
+| File | Result |
+|---|---|
+| 100k rows, fresh catalog | about 17 s (143 s before the query-plan fix in ADR 0005) |
+| 100k rows, identical re-run | about 10 s, no writes |
+| 1M rows (122 MB) | dry run about 15 s, apply about 3 min |
+| Peak memory, 100k rows | 98 MB streamed (252 MB before streaming) |
+
 These numbers come from a laptop and include HTTP, JSON and a fake payment provider that writes to Postgres.
 Treat them as relative, not absolute. What matters is the shape: index scans instead of sequential scans,
 and a single hot row that costs little compared with spreading the same load across products.

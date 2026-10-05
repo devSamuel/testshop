@@ -24,8 +24,8 @@ api  →  orders | importing  →  inventory  →  catalog  →  payments | even
 - **Processes are already separate.** The API (`uvicorn app.main:app`) and the worker (`python -m app.worker`: outbox dispatchers and reconciler) run from the same codebase and image.
   - By default they're two containers, and the worker scales by replicas because each process uses one CPU core ([ADR 0003](0003-checkout-saga-and-outbox.md)).
   - With the worker stopped, the API keeps working while events wait in the outbox.
-- **The data is not separated yet** (one database, one schema, and some foreign keys that cross modules), so these are not independently deployable services. [`architecture.md` section 6](../architecture.md#6-from-modular-monolith-to-services) lists every coupling to break, its resolution, and the extraction order (payments → importing → inventory).
-- The API scales as one unit, which is acceptable at this size; background delivery already scales on its own. The scaling path is documented in [`docs/evolution.md`](../evolution.md).
+- **The data is not separated yet** (one database, one schema, and some foreign keys that cross modules), so these are not independently deployable services. The main couplings to break first are `inventory` writing the `products.stock` column, cross-module foreign keys, and checkout reserving stock inside its own transaction. The cheapest extraction would be `payments`, which is already a port with its own table.
+- The API scales as one unit, which is acceptable at this size; background delivery already scales on its own. Extracting a module later means replacing in-process calls with a client and the outbox dispatcher with a broker relay.
 
 ## Alternatives considered
 - **Microservices from day one:** this would trade ACID for eventual consistency and add a broker, service discovery and distributed tracing, with no problem that requires them yet.

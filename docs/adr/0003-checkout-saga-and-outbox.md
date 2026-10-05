@@ -42,10 +42,7 @@ Measured with `make drain-bench` (a ~50,000-event backlog; laptop, Docker with 1
 - **One deployment shape.** The API serves endpoints only, and background work has one home.
 - **The broker relay will live there.** When events move to a broker, the outbox relay is a focused process in this same container, not something the API also runs.
 
-**What does not help:**
-- **Raising `DISPATCHER_WORKERS`:** more tasks on the same core.
-- **Threads:** the GIL.
-- **Free-threaded Python 3.13t:** it's experimental, and asyncio tasks still share one thread.
+Raising `DISPATCHER_WORKERS` or adding threads does not help: they share the same core and GIL.
 
 ## Consequences
 - Stock and money are strongly consistent the moment the API responds. Only side effects (alerts, notifications) are eventually consistent, typically within about 1 s.
@@ -65,17 +62,5 @@ Measured with `make drain-bench` (a ~50,000-event backlog; laptop, Docker with 1
 |---|---|
 | One transaction including the payment call | Holds row locks for seconds and serializes every buyer of a popular product. |
 | Fire-and-forget side effects after commit | A crash between commit and send loses the side effect. Sending before commit can notify about an order that never existed. |
-| Saga over Kafka/RabbitMQ now | It gives weaker guarantees than the single-database ACID transaction it replaces, and adds operational surface (broker, DLQ, consumer groups, schema versioning) with no current need. The evolution path is documented in [`docs/evolution.md`](../evolution.md). |
+| Saga over Kafka/RabbitMQ now | It gives weaker guarantees than the single-database ACID transaction it replaces, and adds operational surface (broker, DLQ, consumer groups, schema versioning) with no current need. Because handlers are idempotent and transport-agnostic, a broker relay can replace the in-process dispatcher later without touching domain code. |
 | Temporal / workflow engine | An excellent fit when the saga spans many services and needs long timers and visibility. It is overkill for two steps in one process. |
-
-## Before and after the move to a worker container
-
-The move started with a question: *"If we are limited by the GIL, shouldn't the workers be an isolated container that just polls?"*
-
-| | Before | After |
-|---|---|---|
-| Where delivery runs | 4 asyncio tasks inside the API process | a polling-only `worker` container; the API serves HTTP only |
-| CPU | shares one core with checkout requests | one core per worker container |
-| How to scale | `DISPATCHER_WORKERS`: more tasks on the same core | `make up WORKERS=N`: more processes, more cores |
-| Worker down | not possible separately: it was the API process | the API keeps taking orders; events wait safely in the outbox |
-| Evidence | "about 1,400 events/s; the ceiling is Python" | `make drain-bench`: **1,223 → 2,343 → 3,511 events/s** with 1, 2 and 4 containers |

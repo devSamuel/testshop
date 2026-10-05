@@ -6,25 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This is an e-commerce project, branded **"Test Shop"**: a FastAPI + PostgreSQL backend (`backend/`) and a React + Vite + Mantine SPA (`frontend/`), shipped as **one Docker image**. FastAPI serves both `/api` and the built SPA, and a separate Postgres container runs alongside it.
 
 The README is the main deliverable alongside the code: reviewer's guide, decisions, the questions asked of the product owner, and evidence. Further docs:
-- `docs/architecture.md`: structure, flows, data model, and a patterns catalog;
-- `docs/plan.md`: the approved plan and how the build deviated from it;
+- `docs/architecture.md`: structure, data model, the checkout flow and its failure table, the outbox;
 - `docs/adr/`: one decision per file;
-- `docs/upload-path.md`: how an upload travels hop by hop;
-- `docs/evolution.md`: broker and scaling designs;
-- `docs/scaling.md`: the recommended-but-not-built designs (the whole shop at scale on AWS with rate limiting, Redis, SQS and dead-letter queues; Elasticsearch or OpenSearch and hybrid semantic search; load and burst testing with k6; S3, parallel imports, Kafka, outbox at scale);
 - `docs/questions.md`: all 25 product-owner questions and the assumption behind each;
-- `docs/build-journal/README.md` and `docs/ai-log.md`: the build story and the AI corrections.
+- `docs/ai-log.md`: the guardrails, questions and AI corrections;
+- `docs/chaos.md` and `docs/benchmarks.md`: evidence.
 
 ## Hard rule: no comments in code
 The requirements say "if you use AI, remove comments from the code". **Do not add comments** in Python, TypeScript, SQL migrations, YAML, the Dockerfile or the Makefile. That includes `# noqa`, `eslint-disable` and `// TODO`.
 - The frontend enforces it with a custom ESLint rule (`local/no-comments` in `frontend/eslint.config.js`).
 - On the backend it's a convention. If a linter suppression seems necessary, restructure the code or use a `per-file-ignores` entry in `backend/pyproject.toml` instead (`bootstrap.py` uses `importlib` precisely to avoid a `# noqa`).
-- Reasoning belongs in the README, `docs/adr/`, `docs/ai-log.md` or `docs/build-journal/README.md`.
-
-## Hard rule: never name the company behind the requirements
-**Never write the company's name**: not in code, docs, commit messages, package names, storage keys, Docker project, image or tag names, or images. The brand is **"Test Shop"**; the compose project and image are `test-shop`.
-- Before committing, grep case-insensitively for the name, excluding `node_modules`, `.venv` and `.git`.
-- **Screenshots can't be grepped.** If the UI text changes, recapture `docs/screenshots/` with `make screenshots` against a fresh stack (`make reset up`).
+- Reasoning belongs in the README, `docs/adr/` or `docs/ai-log.md`.
 
 ## Commands
 
@@ -67,7 +59,7 @@ Run these from `frontend/`.
 - Dev: `make dev-web` (repo root) proxies `/api` to `VITE_API_PROXY`, which defaults to `http://localhost:8080`; `make dev-web` points it at `:8000`.
 
 ### Evidence scripts (run against a live stack)
-Run these from the repo root, using `BASE_URL=http://localhost:<port>`. They're local evidence, not load tests; load and burst testing at scale is recommended with k6 in `docs/scaling.md`, and the scripts stay as they are.
+Run these from the repo root, using `BASE_URL=http://localhost:<port>`. They're local evidence, not load tests.
 - `make chaos`: SIGKILLs the app mid-checkout, then checks the invariants.
 - `make drain-bench`: outbox drain rate with 1, 2 and 4 worker containers.
 - `make seed-large && make bench`: rewrites `docs/benchmarks.md`.
@@ -124,7 +116,7 @@ Rules:
   - for an external call (email, webhook), pass `event_id` as the provider's idempotency key, because the call can't share our transaction.
 - **Payment is not an outbox command.** The charge is a direct call between the two checkout transactions. The reconciler doesn't read the outbox: it polls `orders` and reuses `settle()` / `expire()`, which write the same events.
 - `InProcessDispatcher.dispatch_batch` claims rows with `SKIP LOCKED` and runs a savepoint per event, with retry/backoff and dead-lettering. It runs only in the worker container, and throughput scales with `WORKERS=N`, not with `DISPATCHER_WORKERS`.
-- **Broker-ready:** handlers must not depend on how events arrive. A future Kafka relay replaces the dispatcher in the worker container (`docs/evolution.md`). Published rows are not cleaned up yet (README, "Outbox at scale").
+- **Broker-ready:** handlers must not depend on how events arrive. A future broker relay replaces the dispatcher in the worker container. Published rows are not cleaned up yet.
 
 **CSV import (`app/importing/`):**
 - `parsing.py` is pure, fuzz-tested by Hypothesis, and streams:
@@ -133,7 +125,7 @@ Rules:
   - `parse_record` and the field parsers deliberately **refuse to guess**: unknown stock, textual prices (`free`), non-USD prices and more than 2 decimals on money are row errors;
   - HTML markup in product text is an error (also enforced by the API schemas through `contains_markup` in `catalog/normalize.py`). SQL-looking text is kept: parameterized SQL is the defence;
   - repeated SKUs: an **identical** repeat is skipped with a warning; a **conflicting** repeat is an error, and the first row is kept;
-  - each rule traces to a row of the official file (README, "Rules derived from the official example file"). Rules beyond it are listed in the addendum of `docs/adr/0005-partial-success-import.md`.
+  - each rule traces to a row of the official file (README, "Rules derived from the example file"). The normalization rules beyond it are listed in `docs/adr/0005-partial-success-import.md`.
 - `service.py`:
   - `store_upload` streams through the `UploadStore` port (`storage.py`, local disk) with a SHA-256;
   - `run()` either does a dry run (classifies batches, no writes) or applies with **one transaction per batch**, using `plan_cache_mode = force_custom_plan` to avoid a generic-plan performance trap;
@@ -158,6 +150,7 @@ Rules:
 - **Migrations:** add a new numbered file in `backend/migrations/versions/` (the latest is `0002`); never edit applied ones. Constraint names follow the naming convention in `core/db.py`. Test upgrade → `alembic check` → downgrade → upgrade.
 - **New tables** must be added to `TABLES` in `tests/conftest.py`, which truncates them between tests.
 - **Logging:** `extra={...}` keys must not collide with `LogRecord` attributes. `created`, `name` and `msg` once crashed every import at INFO level.
-- **Security scope:** authentication and authorization are deliberately out of scope. Don't add them. Document security gaps in the README's "Security scope" section and ADR 0008 instead.
-- **Docs:** keep the README short (about 350 lines) and put depth in `docs/`. It separates what is built from what is recommended but not built: the README's "Scope" section has the summary table, and the designs live in `docs/scaling.md`. The README shows the top 8 product-owner questions; all of them live in `docs/questions.md`. Record significant decisions as ADRs, and record AI mistakes and corrections in `docs/ai-log.md`.
-- **Test data:** `data/products.csv` is the example file that came with the requirements (downloaded 2026-10-02). The app seeds from it, and its rows define the import rules (README, "Rules derived from the official example file"); `test_official_example_file_end_to_end` pins the outcome. It's the only data file, and `.gitignore` keeps anything else in `data/` out of git; the extra parser rules are covered by unit tests and the fixtures in `backend/tests/fixtures`.
+- **Security scope:** authentication and authorization are deliberately out of scope. Don't add them. Document security gaps in the README's "Security scope" section and ADR 0007 instead.
+- **Docs:** keep the README around 2,000 words and put depth in `docs/`. Don't add design documents for features that aren't built; a short "next steps" list in the README is enough. The README shows the top 8 product-owner questions; all of them live in `docs/questions.md`. Record significant decisions as ADRs, and AI mistakes and corrections in `docs/ai-log.md`.
+- **Screenshots:** if the UI text changes, recapture `docs/screenshots/` with `make screenshots` against a fresh stack (`make reset up`).
+- **Test data:** `data/products.csv` is the example file that came with the requirements (downloaded 2026-10-02). The app seeds from it, and its rows define the import rules (README, "Rules derived from the example file"); `test_official_example_file_end_to_end` pins the outcome. It's the only data file, and `.gitignore` keeps anything else in `data/` out of git; the extra parser rules are covered by unit tests and the fixtures in `backend/tests/fixtures`.
